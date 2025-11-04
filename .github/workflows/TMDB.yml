@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Film Search (TMDB)</title>
+<meta name="color-scheme" content="light dark" />
+<style>
+  :root{--bg:#0b0b0c;--fg:#e9eaed;--muted:#9aa0a6;--card:#15161a;--accent:#4cc9f0;}
+  @media (prefers-color-scheme: light){
+    :root{--bg:#ffffff;--fg:#1f2328;--muted:#6b7280;--card:#f6f8fa;--accent:#0ea5e9;}
+  }
+  body{margin:0;font:16px/1.4 system-ui,Segoe UI,Roboto,Inter,Arial,sans-serif;background:var(--bg);color:var(--fg);}
+  .wrap{max-width:960px;margin:0 auto;padding:20px;}
+  h1{font-size:20px;margin:0 0 12px;}
+  .bar{display:flex;gap:10px;align-items:center;position:sticky;top:0;padding:12px 0;background:var(--bg);z-index:10}
+  input[type="search"]{flex:1;padding:12px 14px;border-radius:10px;border:1px solid #2a2e35;background:var(--card);color:var(--fg);outline:none}
+  button{padding:12px 16px;border:0;border-radius:10px;background:var(--accent);color:#001018;font-weight:600;cursor:pointer}
+  button:disabled{opacity:.6;cursor:not-allowed}
+  .hint{font-size:13px;color:var(--muted);margin:8px 0 16px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
+  .card{background:var(--card);border:1px solid #2a2e35;border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+  .poster{aspect-ratio:2/3;background:#0f1115;display:block;width:100%;object-fit:cover}
+  .meta{padding:10px;display:flex;flex-direction:column;gap:6px}
+  .title{font-weight:600}
+  .sub{font-size:13px;color:var(--muted)}
+  .badges{display:flex;gap:6px;flex-wrap:wrap}
+  .badge{font-size:12px;color:#0b1320;background:#d9f2ff;border:0;border-radius:999px;padding:2px 8px}
+  .empty,.err,.loading{padding:16px;border:1px dashed #2a2e35;border-radius:10px;background:var(--card);color:var(--muted);text-align:center}
+  a{color:inherit;text-decoration:none}
+  .toprow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  select{padding:10px 12px;border-radius:10px;border:1px solid #2a2e35;background:var(--card);color:var(--fg)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Film Search (TMDB)</h1>
+  <div class="bar">
+    <input id="q" type="search" placeholder="Search movies… e.g. The Godfather" />
+    <button id="go">Search</button>
+  </div>
+  <div class="toprow">
+    <span class="hint">Powered by TMDB. Results open on themoviedb.org.</span>
+    <select id="lang">
+      <option value="en-US" selected>English (US)</option>
+      <option value="en-GB">English (UK)</option>
+      <option value="de-DE">Deutsch</option>
+      <option value="fr-FR">Français</option>
+      <option value="es-ES">Español</option>
+      <option value="it-IT">Italiano</option>
+      <option value="ja-JP">日本語</option>
+    </select>
+    <select id="year">
+      <option value="">Any year</option>
+    </select>
+    <select id="sort">
+      <option value="popularity.desc" selected>Sort: Popular</option>
+      <option value="vote_average.desc">Sort: Rating</option>
+      <option value="primary_release_date.desc">Sort: Newest</option>
+      <option value="primary_release_date.asc">Sort: Oldest</option>
+    </select>
+  </div>
+
+  <div id="msg" class="hint">Type a search and press Search.</div>
+  <div id="loading" class="loading" style="display:none">Loading…</div>
+  <div id="error" class="err" style="display:none"></div>
+  <div id="empty" class="empty" style="display:none">No results found.</div>
+  <div id="grid" class="grid"></div>
+</div>
+
+<script>
+const API_KEY = "228414a56497eed4cea9b634dca44498"; // <- put your key here
+const API_BASE = "https://api.themoviedb.org/3";
+const IMG_ORIGIN = "https://image.tmdb.org/t/p";
+const poster = (path, size="w342") => path ? `${IMG_ORIGIN}/${size}${path}` : "";
+
+const els = {
+  q: document.getElementById("q"),
+  go: document.getElementById("go"),
+  grid: document.getElementById("grid"),
+  msg: document.getElementById("msg"),
+  loading: document.getElementById("loading"),
+  error: document.getElementById("error"),
+  empty: document.getElementById("empty"),
+  lang: document.getElementById("lang"),
+  year: document.getElementById("year"),
+  sort: document.getElementById("sort"),
+};
+
+(function initYear() {
+  const now = new Date().getFullYear();
+  for (let y = now; y >= 1920; y--) {
+    const opt = document.createElement("option");
+    opt.value = y; opt.textContent = y;
+    els.year.appendChild(opt);
+  }
+})();
+
+function setState({loading=false, error="", empty=false, msg=""}={}) {
+  els.loading.style.display = loading ? "" : "none";
+  els.error.style.display = error ? "" : "none";
+  els.error.textContent = error;
+  els.empty.style.display = empty ? "" : "none";
+  els.msg.textContent = msg || "";
+}
+
+function movieUrl(id) {
+  const lang = els.lang.value || "en-US";
+  const locale = lang.split("-")[0];
+  return `https://www.themoviedb.org/movie/${id}?language=${encodeURIComponent(lang)}#${locale}`;
+}
+
+function formatRuntime(mins) {
+  if (!mins) return "";
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return `${h}h ${m}m`;
+}
+
+async function searchMovies(q) {
+  const params = new URLSearchParams({
+    api_key: API_KEY,
+    query: q,
+    include_adult: "false",
+    language: els.lang.value || "en-US",
+    page: "1",
+    year: els.year.value || "",
+  });
+  const url = `${API_BASE}/search/movie?${params}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`TMDB error: ${r.status}`);
+  const data = await r.json();
+  return data.results || [];
+}
+
+async function fetchDetails(id) {
+  const params = new URLSearchParams({
+    api_key: API_KEY,
+    language: els.lang.value || "en-US",
+    append_to_response: "release_dates"
+  });
+  const r = await fetch(`${API_BASE}/movie/${id}?${params}`);
+  if (!r.ok) return null;
+  return r.json();
+}
+
+function sortResults(list) {
+  const mode = els.sort.value;
+  const copy = [...list];
+  switch (mode) {
+    case "vote_average.desc":
+      return copy.sort((a,b) => (b.vote_average||0)-(a.vote_average||0));
+    case "primary_release_date.desc":
+      return copy.sort((a,b) => new Date(b.release_date||0)-new Date(a.release_date||0));
+    case "primary_release_date.asc":
+      return copy.sort((a,b) => new Date(a.release_date||0)-new Date(b.release_date||0));
+    case "popularity.desc":
+    default:
+      return copy.sort((a,b) => (b.popularity||0)-(a.popularity||0));
+  }
+}
+
+async function onSearch() {
+  const q = els.q.value.trim();
+  if (!q) { setState({msg:"Type a search and press Search."}); return; }
+  setState({loading:true, error:"", empty:false, msg:""});
+  els.grid.innerHTML = "";
+  try {
+    let results = await searchMovies(q);
+    results = sortResults(results);
+    if (!results.length) { setState({loading:false, empty:true}); return; }
+
+    const fragment = document.createDocumentFragment();
+    for (const item of results.slice(0, 24)) {
+      const card = document.createElement("a");
+      card.href = movieUrl(item.id);
+      card.target = "_blank";
+      card.rel = "noopener";
+      card.className = "card";
+
+      const img = document.createElement("img");
+      img.className = "poster";
+      const src = poster(item.poster_path);
+      if (src) img.src = src; else img.style.background = "#222";
+      img.alt = item.title || item.name || "Poster";
+      card.appendChild(img);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const t = document.createElement("div");
+      t.className = "title";
+      t.textContent = item.title || item.name || "(Untitled)";
+      meta.appendChild(t);
+
+      const sub = document.createElement("div");
+      sub.className = "sub";
+      const year = (item.release_date||"").slice(0,4);
+      const rating = item.vote_average ? ` • ★ ${item.vote_average.toFixed(1)}` : "";
+      sub.textContent = `${year||"—"}${rating}`;
+      meta.appendChild(sub);
+
+      const badges = document.createElement("div");
+      badges.className = "badges";
+      if (item.original_language) {
+        const b = document.createElement("span"); b.className = "badge";
+        b.textContent = item.original_language.toUpperCase();
+        badges.appendChild(b);
+      }
+      if (item.popularity) {
+        const b = document.createElement("span"); b.className = "badge";
+        b.textContent = `Pop ${Math.round(item.popularity)}`;
+        badges.appendChild(b);
+      }
+      meta.appendChild(badges);
+
+      card.appendChild(meta);
+      fragment.appendChild(card);
+    }
+    els.grid.appendChild(fragment);
+    setState({loading:false});
+  } catch (e) {
+    setState({loading:false, error:e.message || "Search failed."});
+  }
+}
+
+els.go.addEventListener("click", onSearch);
+els.q.addEventListener("keydown", (e) => { if (e.key === "Enter") onSearch(); });
+[els.lang, els.year, els.sort].forEach(el => el.addEventListener("change", onSearch));
+</script>
+</body>
+</html>
