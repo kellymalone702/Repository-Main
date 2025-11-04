@@ -69,7 +69,7 @@
 </div>
 
 <script>
-const API_KEY = "YOUR_TMDB_API_KEY"; // <- put your key here
+const API_KEY = "228414a56497eed4cea9b634dca44498"; // <- put your key here
 const API_BASE = "https://api.themoviedb.org/3";
 const IMG_ORIGIN = "https://image.tmdb.org/t/p";
 const poster = (path, size="w342") => path ? `${IMG_ORIGIN}/${size}${path}` : "";
